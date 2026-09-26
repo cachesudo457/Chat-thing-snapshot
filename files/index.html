@@ -388,6 +388,7 @@
     font-size: 13px; font-weight: 700; cursor: pointer;
   }
   .btn-sage:hover { background: var(--sage-dark); }
+  .btn-sage:disabled { opacity: 0.5; cursor: default; background: var(--sage); }
   .btn-sage-outline {
     background: #fff; color: var(--sage-dark); border: 1px solid var(--line);
     border-radius: 20px; padding: 12px 20px; font-family: inherit;
@@ -601,6 +602,30 @@
     return !!mine && mine.status === 'invited';
   }
 
+  function callsSupported() {
+    return !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  }
+
+  function micErrorMessage(e) {
+    const n = e && e.name;
+    if (n === 'NotAllowedError' || n === 'PermissionDeniedError') {
+      return "Microphone access is blocked for this site. Click the padlock/site-info icon next to the address bar, allow the microphone, then try again.";
+    }
+    if (n === 'NotFoundError' || n === 'DevicesNotFoundError') {
+      return "No microphone was found on this device.";
+    }
+    if (n === 'NotReadableError' || n === 'TrackStartError') {
+      return "Your microphone seems to be in use by another app right now.";
+    }
+    if (!window.isSecureContext) {
+      return "Voice calls only work over a secure https:// connection (or on localhost). This page isn't loaded over https://, so the browser won't allow microphone access here.";
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return "This browser doesn't support voice calls. Try a recent version of Chrome, Firefox, Safari, or Edge.";
+    }
+    return "Couldn't access your microphone. Check your browser's permissions and try again.";
+  }
+
   async function ensureLocalStream() {
     if (!localStream) localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     return localStream;
@@ -644,11 +669,15 @@
       alert("You're already on a call — hang up first.");
       return;
     }
+    if (!callsSupported()) {
+      alert(micErrorMessage());
+      return;
+    }
     const names = Array.isArray(participantNames) ? participantNames : [participantNames];
     try {
       await ensureLocalStream();
     } catch (e) {
-      alert("Couldn't access your microphone. Check your browser's permissions and try again.");
+      alert(micErrorMessage(e));
       return;
     }
     socket.emit('start-call', { participantNames: names });
@@ -656,9 +685,16 @@
 
   async function acceptIncomingCall() {
     if (!myCallId) return;
+    if (!callsSupported()) {
+      alert(micErrorMessage());
+      socket.emit('call-response', { callId: myCallId, accept: false });
+      teardownCall();
+      return;
+    }
     try {
       await ensureLocalStream();
     } catch (e) {
+      alert(micErrorMessage(e));
       socket.emit('call-response', { callId: myCallId, accept: false });
       teardownCall();
       return;
@@ -1486,6 +1522,7 @@
       if (checked.length === 0) { alert('Pick at least one friend to call.'); return; }
       startCall(checked);
     };
+    renderCallPicker();
 
     socket.emit('get-friend-data');
 
@@ -1502,7 +1539,14 @@
 
   function renderCallPicker() {
     const holder = document.getElementById('call-picker-holder');
+    const startBtn = document.getElementById('start-group-call-btn');
     if (!holder) return; // not on the dashboard right now
+    if (!callsSupported()) {
+      holder.innerHTML = '<p class="sub" style="margin:0;">Voice calls need this page loaded over <code>https://</code> (or <code>localhost</code>) — this connection doesn\'t qualify, so calling is turned off here.</p>';
+      if (startBtn) startBtn.disabled = true;
+      return;
+    }
+    if (startBtn) startBtn.disabled = false;
     const { friends } = friendData;
     if (!friends || friends.length === 0) {
       holder.innerHTML = '<p class="sub" style="margin:0;">Add some friends first.</p>';
@@ -1554,7 +1598,7 @@
         <div class="friend-row">
           <span class="fname">${esc(n)}</span>
           <div class="factions">
-            <button class="btn-mini call" data-action="call" data-name="${esc(n)}">Call</button>
+            <button class="btn-mini call" data-action="call" data-name="${esc(n)}"${callsSupported() ? '' : ' disabled title="Voice calls need https:// or localhost"'}>Call</button>
             <button class="btn-mini neutral" data-action="remove" data-name="${esc(n)}">Remove</button>
           </div>
         </div>
